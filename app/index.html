@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lemmings Amiga Level Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <div><h1>Lemmings Amiga Level Editor</h1><span id="version" class="version"></span></div>
+      <span id="dirtyBadge" class="dirty-badge">No project loaded</span>
+    </div>
+    <p>HTML5 editor and campaign inspector for the original Amiga Lemmings data.</p>
+  </header>
+
+  <main>
+    <section class="panel load-panel">
+      <label class="file-button">Choose extracted game-data folder
+        <input id="dataFolder" type="file" webkitdirectory multiple>
+      </label>
+      <label class="file-button secondary">Import editor project
+        <input id="projectFile" type="file" accept="application/json,.json">
+      </label>
+      <button id="saveProject" type="button" disabled>Save project JSON</button>
+      <div id="status" class="status"></div>
+      <p class="hint">No server or Node is required. Select the folder containing <code>Level000</code>, <code>Ground1</code>, <code>Objects1</code>, <code>oddtable</code> and <code>special0</code>…<code>special3</code>. Edits are held in memory until exported.</p>
+    </section>
+
+    <section class="toolbar panel">
+      <label>Difficulty <select id="rating"></select></label>
+      <button id="prev" type="button">◀ Previous</button>
+      <label>Level <input id="levelNo" type="number" min="1" max="30" value="1"></label>
+      <button id="next" type="button">Next ▶</button>
+      <label>Zoom <select id="zoom"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4×</option></select></label>
+      <label class="check"><input id="showObjects" type="checkbox" checked> Objects</label>
+      <label class="check"><input id="showSteel" type="checkbox"> Steel</label>
+      <label class="check"><input id="showTerrainBounds" type="checkbox"> Terrain bounds</label>
+      <label class="check"><input id="showSelection" type="checkbox" checked> Selection</label>
+    </section>
+
+    <section class="panel level-panel">
+      <div class="level-heading">
+        <div>
+          <h2 id="levelTitle">No level loaded</h2>
+          <div id="levelSource" class="subtle"></div>
+        </div>
+        <div class="edit-layer">
+          <span>Edit layer</span>
+          <label><input type="radio" name="editLayer" value="terrain" checked> Terrain</label>
+          <label><input type="radio" name="editLayer" value="objects"> Objects</label>
+          <label><input type="radio" name="editLayer" value="steel"> Steel</label>
+        </div>
+      </div>
+      <div id="canvasScroll" class="canvas-scroll"><canvas id="levelCanvas" width="1600" height="160"></canvas></div>
+      <p class="hint">Click an item in the active edit layer to select it. Drag a selected item directly on the level. Exact values can be edited in the Pieces tab.</p>
+    </section>
+
+    <section class="panel tab-panel">
+      <nav class="tabs" aria-label="Editor sections">
+        <button class="tab active" data-tab="level" type="button">Level properties</button>
+        <button class="tab" data-tab="pieces" type="button">Pieces</button>
+        <button class="tab" data-tab="campaign" type="button">Campaign</button>
+        <button class="tab" data-tab="project" type="button">Project / export</button>
+      </nav>
+
+      <div id="tab-level" class="tab-content active">
+        <div class="two-col">
+          <div>
+            <h3>Properties</h3>
+            <div class="form-grid">
+              <label class="wide">Editing source
+                <select id="propertySource">
+                  <option value="active">Active campaign slot</option>
+                  <option value="base">Base physical level</option>
+                  <option value="odd">Oddtable override</option>
+                </select>
+              </label>
+              <label class="wide">Title <input id="propTitle" type="text" maxlength="32"></label>
+              <label>Release rate <input id="propRelease" type="number" min="0" max="999"></label>
+              <label>Lemmings <input id="propLemmings" type="number" min="0" max="999"></label>
+              <label>To rescue <input id="propRescue" type="number" min="0" max="999"></label>
+              <label>Time (min) <input id="propTime" type="number" min="0" max="999"></label>
+              <label>Climbers <input class="skill" data-skill="0" type="number" min="0" max="999"></label>
+              <label>Floaters <input class="skill" data-skill="1" type="number" min="0" max="999"></label>
+              <label>Bombers <input class="skill" data-skill="2" type="number" min="0" max="999"></label>
+              <label>Blockers <input class="skill" data-skill="3" type="number" min="0" max="999"></label>
+              <label>Builders <input class="skill" data-skill="4" type="number" min="0" max="999"></label>
+              <label>Bashers <input class="skill" data-skill="5" type="number" min="0" max="999"></label>
+              <label>Miners <input class="skill" data-skill="6" type="number" min="0" max="999"></label>
+              <label>Diggers <input class="skill" data-skill="7" type="number" min="0" max="999"></label>
+            </div>
+            <div class="button-row"><button id="applyProperties" type="button">Apply properties</button></div>
+          </div>
+
+          <div>
+            <h3>Physical map settings</h3>
+            <div class="form-grid">
+              <label>Initial screen X <input id="mapScreenX" type="number" min="0" max="65535"></label>
+              <label>Graphics set
+                <select id="mapGraphicSet">
+                  <option value="0">0 — Dirt</option><option value="1">1 — Fire</option><option value="2">2 — Marble</option><option value="3">3 — Pillar</option><option value="4">4 — Crystal</option>
+                </select>
+              </label>
+              <label>Special backdrop
+                <select id="mapSpecialSet">
+                  <option value="0">0 — none</option><option value="1">1 — special0 / AWESOME</option><option value="2">2 — special1 / MENACING</option><option value="3">3 — special2 / BeastII</option><option value="4">4 — special3 / Beast</option>
+                </select>
+              </label>
+              <label class="check-line"><input id="slotOddOverride" type="checkbox"> This campaign slot uses <code>oddtable</code> properties</label>
+            </div>
+            <div class="button-row"><button id="applyMapSettings" type="button">Apply map settings</button></div>
+            <div id="mapNote" class="note"></div>
+          </div>
+        </div>
+        <div id="info" class="info"></div>
+      </div>
+
+      <div id="tab-pieces" class="tab-content">
+        <div class="pieces-layout">
+          <div>
+            <div class="pieces-header">
+              <h3 id="pieceListTitle">Terrain pieces</h3>
+              <div class="button-row compact">
+                <button id="addPiece" type="button">Add</button>
+                <button id="deletePiece" type="button" disabled>Delete selected</button>
+              </div>
+            </div>
+            <div id="pieceList" class="piece-list"></div>
+          </div>
+          <div>
+            <h3>Selected item</h3>
+            <div id="pieceEmpty" class="note">Select an item from the list or click it on the level.</div>
+            <div id="pieceEditor" class="piece-editor hidden">
+              <div class="form-grid">
+                <label id="pieceIdLabel">ID <input id="pieceId" type="number" min="0" max="63"></label>
+                <label>X <input id="pieceX" type="number"></label>
+                <label>Y <input id="pieceY" type="number"></label>
+                <label id="pieceWLabel">Width <input id="pieceW" type="number" min="4"></label>
+                <label id="pieceHLabel">Height <input id="pieceH" type="number" min="4"></label>
+                <label id="pieceFlagsLabel" class="wide">Raw flags <input id="pieceFlags" type="text" spellcheck="false"></label>
+              </div>
+              <div id="terrainFlagControls" class="flag-controls">
+                <label><input id="terrainErase" type="checkbox"> Erase</label>
+                <label><input id="terrainUpside" type="checkbox"> Upside-down</label>
+                <label><input id="terrainNoOverwrite" type="checkbox"> No overwrite</label>
+              </div>
+              <div id="objectFlagControls" class="flag-controls hidden">
+                <label><input id="objectUpside" type="checkbox"> Upside-down</label>
+                <label><input id="objectOnlyOverwrite" type="checkbox"> Only overwrite</label>
+                <label><input id="objectNoOverwrite" type="checkbox"> No overwrite</label>
+              </div>
+              <div class="button-row"><button id="applyPiece" type="button">Apply item</button></div>
+            </div>
+            <div class="note"><strong>Format limits:</strong> up to 400 terrain entries, 32 objects and 32 steel areas per physical level. Steel coordinates and sizes are stored on a 4-pixel grid and are snapped on apply/drag.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-campaign" class="tab-content">
+        <div class="campaign-tools">
+          <div>
+            <h3>Difficulty group sequence</h3>
+            <div id="difficultyOrder" class="difficulty-order"></div>
+            <p class="hint">This project-level sequence is editable now. Writing a changed group sequence back into the original Amiga executable is not yet implemented.</p>
+          </div>
+          <div>
+            <h3>Swap across groups</h3>
+            <div class="inline-form">
+              <label>Target group <select id="swapRating"></select></label>
+              <label>Target level <input id="swapLevel" type="number" min="1" max="30" value="1"></label>
+              <button id="swapSlots" type="button">Swap with current slot</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="campaign-table">
+            <thead><tr><th>#</th><th>Active title</th><th>Physical map</th><th>Properties</th><th>Special</th><th>Order</th><th></th></tr></thead>
+            <tbody id="campaignBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tab-project" class="tab-content">
+        <div class="two-col">
+          <div>
+            <h3>Editor project</h3>
+            <p>The project JSON stores all 100 physical level records, all 80 <code>oddtable</code> records, campaign slot assignments and the editable difficulty-group sequence. Original graphics are not copied into it; reload the game-data folder to render.</p>
+            <div class="button-stack">
+              <button id="projectSave2" type="button">Save full project JSON</button>
+              <button id="projectReset" type="button" class="danger">Reset all edits to loaded source data</button>
+            </div>
+          </div>
+          <div>
+            <h3>Raw exports</h3>
+            <p>These are writer-side validation outputs. They are <strong>uncompressed</strong>; replacing the original ByteKiller-compressed Amiga files directly with these exports will not work yet.</p>
+            <div class="button-stack">
+              <button id="exportRecord" type="button">Export active 2048-byte level record</button>
+              <button id="exportPack" type="button">Export active 8192-byte Level pack</button>
+              <button id="exportOddtable" type="button">Export modified oddtable</button>
+              <button id="exportOrder" type="button">Export campaign-order JSON</button>
+            </div>
+          </div>
+        </div>
+        <div class="note special-note"><strong>Special levels:</strong> v0.10 can assign any of the four existing Amiga special backdrops to another physical level. The project format deliberately leaves room for additional special assets later, but adding a fifth unique <code>specialX</code> file to the original game requires the Amiga loader/table limit to be proved and, if necessary, patched.</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="amiga-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
