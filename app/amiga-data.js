@@ -1,4 +1,4 @@
-const APP_VERSION = '0.10';
+const APP_VERSION = '0.13';
 
 // Original Lemmings campaign order. The signed values are the established
 // fileId*10+part encoding used by the DOS data/config tables; negative slots

@@ -1,4 +1,7 @@
+if (!window.LEMMINGS_DATA) throw new Error('amiga-data.js did not initialise. Open editor-standalone.html if your browser blocks local companion scripts.');
+if (!window.LEMMINGS_SOURCE_IMPORT) throw new Error('source-import.js did not initialise. Open editor-standalone.html if your browser blocks local companion scripts.');
 const { APP_VERSION, CAMPAIGN_ORDER, STYLE_META, encodedToPhysical } = window.LEMMINGS_DATA;
+const { collectSources } = window.LEMMINGS_SOURCE_IMPORT;
 
 const STYLE_NAMES = ['Dirt', 'Fire', 'Marble', 'Pillar', 'Crystal'];
 const BASE_DIFFICULTIES = ['Fun', 'Tricky', 'Taxing', 'Mayhem'];
@@ -35,6 +38,7 @@ let currentLevel = null;
 let selectedPiece = null;
 let dragState = null;
 let renderToken = 0;
+let sourceInfo = null;
 
 $('version').textContent = `v${APP_VERSION}`;
 
@@ -42,6 +46,30 @@ function status(msg, kind = '') {
   const el = $('status');
   el.textContent = msg;
   el.className = `status ${kind}`;
+}
+
+function importLog(message, kind = '') {
+  const el = $('importLog');
+  if (!el) return;
+  const stamp = new Date().toLocaleTimeString();
+  const prefix = kind === 'error' ? 'ERROR' : kind === 'ok' ? 'OK' : 'INFO';
+  el.textContent += `\n[${stamp}] ${prefix}: ${message}`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function selectedFileSummary(selected) {
+  if (!selected?.length) return 'No source selected';
+  const names = selected.map(f => f.name || 'unnamed');
+  const bytes = selected.reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+  const size = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+  return `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` +${names.length - 3} more` : ''} (${size})`;
+}
+
+async function allowPaint() {
+  await new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
+    else setTimeout(resolve, 0);
+  });
 }
 
 function setDirty(value = true) {
@@ -63,9 +91,9 @@ function setU32be(b, o, v) { v >>>= 0; b[o] = (v >>> 24) & 255; b[o + 1] = (v >>
 
 async function getBytes(name) {
   if (byteCache.has(name)) return byteCache.get(name);
-  const f = files.get(name);
-  if (!f) throw new Error(`Missing required file: ${name}`);
-  const b = new Uint8Array(await f.arrayBuffer());
+  const source = files.get(name);
+  if (!source) throw new Error(`Missing required file: ${name}`);
+  const b = source instanceof Uint8Array ? source : new Uint8Array(await source.arrayBuffer());
   byteCache.set(name, b);
   return b;
 }
@@ -788,7 +816,7 @@ function encodedCampaignExport() {
   return out;
 }
 
-async function initialiseFromFolder() {
+async function initialiseFromSource() {
   const l0 = await unpackFile('Level000'), g1 = await unpackFile('Ground1'), g5 = await unpackFile('Ground5');
   if (l0.length !== 8192 || g1.length !== 30008 || g5.length !== 40840) throw new Error('Unexpected decrunched sizes; this may not be the expected Amiga Lemmings data set.');
   sourcePhysicalLevels = [];
@@ -805,31 +833,148 @@ async function initialiseFromFolder() {
   rebuildRatingOptions(BASE_DIFFICULTIES[0]); $('levelNo').value = 1; renderDifficultyOrder();
 }
 
+const requiredSourceNames = [
+  ...Array.from({ length: 25 }, (_, i) => `Level${String(i).padStart(3, '0')}`),
+  ...Array.from({ length: 5 }, (_, i) => `Ground${i + 1}`),
+  ...Array.from({ length: 5 }, (_, i) => `Objects${i + 1}`),
+  'oddtable',
+  ...Array.from({ length: 4 }, (_, i) => `special${i}`)
+];
+
+function clearLoadedSource() {
+  loaded = false;
+  setDirty(false);
+  files.clear();
+  byteCache.clear();
+  unpackCache.clear();
+  terrainCache.clear();
+  objectCache.clear();
+  specialCache.clear();
+  sourceInfo = null;
+  $('saveProject').disabled = true;
+  const summary = $('sourceSummary');
+  summary.classList.add('hidden');
+  summary.innerHTML = '';
+}
+
+function sourceFamilyCounts() {
+  const names = [...files.keys()];
+  return {
+    levels: names.filter(n => /^Level\d{3}$/.test(n)).length,
+    grounds: names.filter(n => /^Ground\d+$/.test(n)).length,
+    objects: names.filter(n => /^Objects\d+$/.test(n)).length,
+    specials: names.filter(n => /^special\d+$/.test(n)).length,
+    oddtable: files.has('oddtable')
+  };
+}
+
+function showSourceSummary(info, selectedCount) {
+  const summary = $('sourceSummary');
+  const diskText = info.diskImages.length
+    ? info.diskImages.map(d => `${d.name}: ${d.entries.length} embedded files`).join(' · ')
+    : 'no disk image table used';
+  const archiveText = info.archives.length
+    ? info.archives.map(a => `${a.name}: ${a.entries.length} LHA entries`).join(' · ')
+    : 'no LHA wrapper';
+  const counts = sourceFamilyCounts();
+  summary.innerHTML = `<strong>Source:</strong> ${archiveText}<br><strong>Disk extraction:</strong> ${diskText}<br><strong>Editor resources found:</strong> ${counts.levels} Level packs, ${counts.grounds} Ground banks, ${counts.objects} Objects banks, ${counts.specials} special backdrops${counts.oddtable ? ', oddtable' : ''}. ${files.size} embedded/loose files indexed from ${selectedCount} selected item${selectedCount === 1 ? '' : 's'}.`;
+  summary.classList.remove('hidden');
+}
+
+async function loadSourceSelection(fileList, sourceLabel) {
+  const selected = Array.from(fileList || []);
+  if (!selected.length) {
+    status('No files were supplied by the file picker.', 'error');
+    importLog('The picker closed without returning a file.', 'error');
+    return;
+  }
+  const selectedSummary = selectedFileSummary(selected);
+  const selectedEl = $('selectedSource');
+  if (selectedEl) selectedEl.textContent = selectedSummary;
+  clearLoadedSource();
+  status(`Selected ${selectedSummary}. Starting import…`);
+  importLog(`Selected ${sourceLabel}: ${selectedSummary}`);
+  await allowPaint();
+  try {
+    const info = await collectSources(selected, (message) => {
+      status(message);
+      importLog(message);
+    });
+    sourceInfo = info;
+    for (const [name, item] of info.files) files.set(name, item.bytes);
+    showSourceSummary(info, selected.length);
+    importLog(`Source indexing complete. ${files.size} files are available to the editor.`, 'ok');
+
+    const missing = requiredSourceNames.filter(name => !files.has(name));
+    if (missing.length) {
+      const counts = sourceFamilyCounts();
+      const looksRelated = counts.levels || counts.grounds || counts.objects || counts.specials || counts.oddtable;
+      const prefix = looksRelated
+        ? `This looks like a Lemmings-family data set, but v${APP_VERSION} currently initialises the original-game campaign model only.`
+        : 'The selected source did not expose the original Lemmings editor data.';
+      const compactMissing = missing.length > 12 ? `${missing.slice(0, 12).join(', ')} … (${missing.length} missing)` : missing.join(', ');
+      const message = `${prefix} Missing: ${compactMissing}`;
+      status(message, 'error');
+      importLog(message, 'error');
+      return;
+    }
+
+    status('Found all original-game resources. Verifying and decoding source data…');
+    importLog('All required original-game resources found. Beginning ByteKiller verification.');
+    await allowPaint();
+    await initialiseFromSource();
+    importLog('All 100 physical level records and oddtable decoded.', 'ok');
+    await refresh();
+    const sourceKind = info.archives.length ? 'LHA/disk source' : info.diskImages.length ? 'disk-image source' : 'loose-file source';
+    const message = `Amiga data loaded from ${sourceKind}. Editor project initialised.`;
+    status(message, 'ok');
+    importLog(message, 'ok');
+    if (info.notes.length) {
+      console.warn('Source import notes:', info.notes);
+      for (const note of info.notes) importLog(note);
+    }
+  } catch (err) {
+    console.error(err);
+    const detail = err?.stack || err?.message || String(err);
+    status(`Source import failed: ${err?.message || err}`, 'error');
+    importLog(detail, 'error');
+    const diagnostics = $('importDiagnostics');
+    if (diagnostics) diagnostics.open = true;
+  }
+}
+
 // --- UI events ---------------------------------------------------------
 
-$('dataFolder').addEventListener('change', async (e) => {
-  loaded = false; setDirty(false); files.clear(); byteCache.clear(); unpackCache.clear(); terrainCache.clear(); objectCache.clear(); specialCache.clear();
-  for (const f of e.target.files) {
-    const n = baseName(f.webkitRelativePath || f.name);
-    if (n.startsWith('._') || n === '.DS_Store') continue;
-    if (!files.has(n)) files.set(n, f);
-  }
-  const required = [
-    ...Array.from({ length: 25 }, (_, i) => `Level${String(i).padStart(3, '0')}`),
-    ...Array.from({ length: 5 }, (_, i) => `Ground${i + 1}`), ...Array.from({ length: 5 }, (_, i) => `Objects${i + 1}`),
-    'oddtable', ...Array.from({ length: 4 }, (_, i) => `special${i}`)
-  ];
-  const missing = required.filter(n => !files.has(n));
-  if (missing.length) { status(`Folder loaded, but key files are missing: ${missing.join(', ')}`, 'error'); return; }
-  status(`Loaded ${files.size} files. Verifying and decoding source data…`);
-  try { await initialiseFromFolder(); await refresh(); status('Amiga data loaded. Editor project initialised from source.', 'ok'); }
-  catch (err) { console.error(err); status(`Data check failed: ${err.message}`, 'error'); }
+$('sourceFiles').addEventListener('change', async (e) => {
+  const picked = Array.from(e.target.files || []);
+  await loadSourceSelection(picked, 'selected archive / disk / files');
+  e.target.value = '';
 });
+
+$('dataFolder').addEventListener('change', async (e) => {
+  const picked = Array.from(e.target.files || []);
+  await loadSourceSelection(picked, 'selected data folder');
+  e.target.value = '';
+});
+
+const dropZone = $('dropZone');
+if (dropZone) {
+  for (const eventName of ['dragenter', 'dragover']) {
+    dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('drag-over'); });
+  }
+  for (const eventName of ['dragleave', 'drop']) {
+    dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('drag-over'); });
+  }
+  dropZone.addEventListener('drop', async (e) => {
+    const dropped = Array.from(e.dataTransfer?.files || []);
+    await loadSourceSelection(dropped, 'dropped archive / disk / files');
+  });
+}
 
 $('projectFile').addEventListener('change', async (e) => {
   const f = e.target.files?.[0]; if (!f) return;
   try {
-    if (!loaded) throw new Error('Load the original game-data folder first so the editor has graphics to render.');
+    if (!loaded) throw new Error('Load an original-game LHA, disk image or extracted data source first so the editor has graphics to render.');
     const p = normaliseImportedProject(JSON.parse(await f.text()));
     physicalLevels = clone(p.physicalLevels); oddRecords = clone(p.oddRecords); campaignOrder = clone(p.campaignOrder);
     difficultyOrder = Array.isArray(p.difficultyOrder) && p.difficultyOrder.length === 4 ? clone(p.difficultyOrder) : [...BASE_DIFFICULTIES];
@@ -980,3 +1125,8 @@ $('exportOrder').addEventListener('click', () => {
 
 rebuildRatingOptions(BASE_DIFFICULTIES[0]); renderDifficultyOrder(); updateLevelNumberRange(); setDirty(false);
 status('Choose the extracted Lemmings data folder to begin.');
+
+
+status(`Editor v${APP_VERSION} ready. Choose the LHA, disk image, loose files, or data folder to begin.`, 'ok');
+const readyLog = $('importLog');
+if (readyLog) readyLog.textContent = `Editor v${APP_VERSION} scripts initialised successfully. Waiting for a source file.`;
